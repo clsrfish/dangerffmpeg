@@ -1,0 +1,83 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "type": "process",
+            "label": "C/C++: cmake debug build",
+            "command": "cmake",
+            "args": [
+                "--log-level=DEBUG",
+                "-DCMAKE_BUILD_TYPE=Debug",
+                "--graphviz=dependencies.dot",
+                ".."
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/build"
+            },
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "presentation": {
+                "clear": true
+            },
+            "detail": "Run cmake debug build"
+        },
+        {
+            "type": "process",
+            "label": "C/C++: make",
+            "command": "cmake",
+            "args": [
+                "--build",
+                ".",
+                "--verbose"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/build"
+            },
+            "dependsOn": [
+                "C/C++: cmake debug build"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "presentation": {
+                "clear": false
+            },
+            "detail": "Make the target file"
+        },
+        {
+            "type": "shell",
+            "label": "C/C++: show project's dependencies path",
+            "command": "sh dependencies.sh",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "dependsOn": [
+                "C/C++: cmake debug build"
+            ],
+            "presentation": {
+                "clear": false
+            },
+            "detail": "Show project's dependencies path"
+        },
+        {
+            "type": "shell",
+            "label": "C/C++ clean project",
+            "command": "for f in $(ls -A | grep -v '.gitkeep');do rm -rv ${f};done",
+            "options": {
+                "cwd": "${workspaceFolder}/build"
+            },
+            "presentation": {
+                "clear": false
+            },
+            "detail": "Remove build cache and artifacts"
+        }
+    ]
+}
