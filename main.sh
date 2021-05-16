@@ -1,8 +1,11 @@
 #!/bin/bash
 
+cd $(dirname $0)
+
 if [ ! -d build ]; then
     echo "-- Build directory not exists"
 fi
+
 program=main
 if [ -f ./build/${program} ]; then
     rm ./build/${program}
@@ -21,6 +24,6 @@ fi
 
 if [ -x ./build/${program} ]; then
     otool -L ./build/${program}
-    echo "-- Launching main"
-    ./build/${program}
+    echo "-- Launching main, arguments: ${@}"
+    ./build/${program} ${@}
 fi

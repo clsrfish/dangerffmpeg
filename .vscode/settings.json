@@ -69,6 +69,9 @@
         "streambuf": "cpp",
         "system_error": "cpp",
         "tuple": "cpp",
-        "unordered_map": "cpp"
+        "unordered_map": "cpp",
+        "random": "cpp",
+        "regex": "cpp",
+        "set": "cpp"
     }
 }

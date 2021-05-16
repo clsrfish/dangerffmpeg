@@ -25,18 +25,13 @@ link_directories(
     ${PROJECT_BINARY_DIR}
 )
 
-include(FetchContent)
-# spdlog
-FetchContent_Declare(
-    spdlog
-    GIT_REPOSITORY https://github.com/gabime/spdlog.git
-    GIT_TAG v1.8.5
-)
-FetchContent_MakeAvailable(spdlog)
-set(SPDLOG_ENABLE_PCH ON)
+include(${CMAKE_SOURCE_DIR}/cmake/ffmpeg.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/spdlog.cmake)
 
+add_subdirectory(src)
 add_executable(${PROJECT_NAME} main.cpp)
-target_link_libraries(${PROJECT_NAME} PRIVATE spdlog)
+target_include_directories(${PROJECT_NAME} PRIVATE ${ffmpeg_INCLUDE_DIRS})
+target_link_libraries(${PROJECT_NAME} PRIVATE spdlog PkgConfig::ffmpeg src)
 
 # Test case
 include(CTest)
