@@ -10,7 +10,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/build/main",
             "args": [
-                "assets/video.mp4"
+                "assets/ohayo_oniityan.mp4"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

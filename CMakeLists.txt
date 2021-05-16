@@ -25,13 +25,11 @@ link_directories(
     ${PROJECT_BINARY_DIR}
 )
 
-include(${CMAKE_SOURCE_DIR}/cmake/ffmpeg.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/spdlog.cmake)
 
 add_subdirectory(src)
 add_executable(${PROJECT_NAME} main.cpp)
-target_include_directories(${PROJECT_NAME} PRIVATE ${ffmpeg_INCLUDE_DIRS})
-target_link_libraries(${PROJECT_NAME} PRIVATE spdlog PkgConfig::ffmpeg src)
+target_link_libraries(${PROJECT_NAME} PRIVATE spdlog src)
 
 # Test case
 include(CTest)

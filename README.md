@@ -8,5 +8,5 @@ Source code for tutorial 《[DangerFFmpeg](https://clsrfish.github.io/2021/05/13
 Execute `main.sh` from terminal：
 
 ```shell
-$ ./main.sh assets/video.mp4
+$ ./main.sh assets/ohayo_oniityan.mp4
 ```
