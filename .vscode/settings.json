@@ -73,6 +73,7 @@
         "random": "cpp",
         "regex": "cpp",
         "set": "cpp",
-        "condition_variable": "cpp"
+        "condition_variable": "cpp",
+        "thread": "cpp"
     }
 }

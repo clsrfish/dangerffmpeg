@@ -14,88 +14,13 @@ extern "C" {
 
 #include <mutex>
 
+#include "./packet_queue.hpp"
 #include "./tutorial02.hpp"
-
 namespace tutorial03 {
-
-struct PacketQueue {
-  AVPacketList *firstPkt, *lastPkt;
-  int nbPackets;
-  int size;
-  std::mutex* aMutex;
-  std::condition_variable* aCond;
-};
-PacketQueue audioQueue;
-
-void packetQueueInit(PacketQueue* queue) {
-  memset(queue, 0, sizeof(PacketQueue));
-  queue->aMutex = new std::mutex;
-  queue->aCond = new std::condition_variable;
-}
-
-int packetQueuePut(PacketQueue* queue, AVPacket* pkt) {
-  AVPacketList* pktl;
-  AVPacket* dst = av_packet_alloc();
-  if (av_packet_ref(dst, pkt) < 0) {
-    return -1;
-  }
-  pktl = reinterpret_cast<AVPacketList*>(av_malloc(sizeof(AVPacketList)));
-  if (pktl == nullptr) {
-    return -1;
-  }
-
-  pktl->pkt = *dst;
-  pktl->next = nullptr;
-
-  std::lock_guard<std::mutex> lk(*(queue->aMutex));
-
-  if (queue->lastPkt == nullptr) {
-    queue->firstPkt = pktl;
-  } else {
-    queue->lastPkt->next = pktl;
-  }
-  queue->lastPkt = pktl;
-  queue->nbPackets++;
-  queue->size += pktl->pkt.size;
-
-  queue->aCond->notify_all();
-
-  return 0;
-}
 
 bool quit = false;
 
-int packetQueueGet(PacketQueue* queue, AVPacket* pkt, bool block) {
-  AVPacketList* pktl;
-
-  int ret;
-
-  std::unique_lock<std::mutex> lk(*(queue->aMutex));
-  while (true) {
-    if (quit) {
-      return -1;
-    }
-
-    pktl = queue->firstPkt;
-    if (pktl != nullptr) {
-      queue->firstPkt = pktl->next;
-      if (queue->firstPkt == nullptr) {
-        queue->lastPkt = nullptr;
-      }
-      queue->nbPackets--;
-      queue->size -= pktl->pkt.size;
-      *pkt = pktl->pkt;
-      av_free(pktl);
-      ret = 1;
-      break;
-    } else if (!block) {
-      ret = 0;
-    } else {
-      queue->aCond->wait(lk);
-    }
-  }
-  return ret;
-}
+PacketQueue audioQueue;
 
 int audioDecodeFrame(AVCodecContext* aCodecCtx, uint8_t* buf, int bufSize) {
   AVPacket pkt;
@@ -244,6 +169,7 @@ int main(int argc, char const* argv[]) {
     while (SDL_PollEvent(&ev)) {
       if (ev.type == SDL_QUIT || (ev.type == SDL_KEYDOWN && ev.key.keysym.sym == SDLK_ESCAPE)) {
         quit = true;
+        audioQueue.quit = true;
       }
     }
     if (quit) {
@@ -258,7 +184,7 @@ int main(int argc, char const* argv[]) {
     }
   }
   quit = true;
-  audioQueue.aCond->notify_all();
+  audioQueue.cond->notify_all();
 
   // Cleanup SDL
   SDL_AudioQuit();
