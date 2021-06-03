@@ -6,25 +6,31 @@ extern "C" {
 #include <SDL_thread.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/frame.h>
+#include <libavutil/time.h>
 #include <libswscale/swscale.h>
 #ifdef __cplusplus
 }
 #endif
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <thread>
 
 #include "./packet_queue.hpp"
 #include "./tutorial04.hpp"
 #include "./video_picture.hpp"
 
-namespace tutorial04 {
+namespace tutorial05 {
 const int SCREEN_W = 640, SCREEN_H = 480;
 
 const int MAX_AUDIOQ_SIZE = 5 * 16 * 1024;
 const int MAX_VIDEOQ_SIZE = 5 * 256 * 1024;
 
 const int VIDEO_PICTURE_QUEUE_SIZE = 10;
+
+const double AV_SYNC_THRESHOLD = 0.01;
+const double AV_NOSYNC_THRESHOLD = 10.0;
 
 #define FF_REFRESH_EVENT (SDL_USEREVENT)
 #define FF_QUIT_EVENT (SDL_USEREVENT + 1)
@@ -41,6 +47,8 @@ struct VideoState {
   unsigned int audioBufIndex;
   AVPacket audioPkt;
 
+  double audioClock;
+
   AVStream* videoSt;
   AVCodecContext* videoCtx;
   PacketQueue videoQueue;
@@ -55,6 +63,11 @@ struct VideoState {
   std::mutex* picQueueMutex;
   std::condition_variable* picQueueCond;
   int picQueueSize;
+
+  double videoClock;  // pst of last decode frame / predicated pts of next decoded frame
+  double frameLastDelay;
+  double frameLastPts;
+  double frameTimer;
 
   std::string filename;
 
@@ -74,6 +87,10 @@ int audioDecodeFrame(VideoState* is, uint8_t* buf, int bufSize) {
   }
 
   avcodec_send_packet(is->audioCtx, &pkt);
+  // if update, update the audio clock w/pts
+  if (pkt.pts != AV_NOPTS_VALUE) {
+    is->audioClock = av_q2d(is->audioSt->time_base) * pkt.pts;
+  }
 
   int bufIndex = 0;
   AVFrame* frame = av_frame_alloc();
@@ -83,8 +100,13 @@ int audioDecodeFrame(VideoState* is, uint8_t* buf, int bufSize) {
     assert(dataSize <= bufSize - bufIndex);
     memcpy(buf + bufIndex, frame->data[0], dataSize);
     bufIndex += dataSize;
+    // Keep audioClock update-to-date
+    double pts = is->audioClock;  // used next time
+    // *pts_ptr = pts;
+    int bytesPerSample = 4 * is->audioSt->codec->channels;
+    is->audioClock += dataSize / bytesPerSample * is->audioSt->codec->sample_rate;
   }
-  av_free(frame);
+  av_frame_free(&frame);
   av_packet_unref(&pkt);
   return bufIndex;
 }
@@ -141,7 +163,7 @@ void allocPic(VideoState* is) {
   avpicture_fill(reinterpret_cast<AVPicture*>(vp->frame), buffer, AV_PIX_FMT_YUV420P, vp->width, vp->height);
 }
 
-int queuePicture(VideoState* is, AVFrame* pFrame) {
+int queuePicture(VideoState* is, AVFrame* pFrame, double pts) {
   /* wait until we have space for a new pic */
   std::unique_lock<std::mutex> lk((*is->picQueueMutex));
   while (is->picQueueSize >= VIDEO_PICTURE_QUEUE_SIZE && !is->quit) {
@@ -168,12 +190,35 @@ int queuePicture(VideoState* is, AVFrame* pFrame) {
   sws_scale(is->swsCtx, reinterpret_cast<uint8_t**>(pFrame->data), pFrame->linesize, 0, is->videoSt->codec->height,
             reinterpret_cast<uint8_t**>(vp->frame->data), vp->frame->linesize);
 
+  vp->pts = pts;
   // now we inform out displat thread that we have a pic ready
   if (++is->pqWindex == VIDEO_PICTURE_QUEUE_SIZE) {
     is->pqWindex = 0;
   }
   is->picQueueSize++;
   return 0;
+}
+
+double synchronizeVideo(VideoState* is, AVFrame* srcFrame, double pts) {
+  if (pts != 0) {
+    /* if we have pts, set video clock to it */
+    is->videoClock = pts;
+    spdlog::info("pts not 0 {0:f}", pts);
+  } else {
+    /* if we aren't given a pts, set it to the clock */
+    pts = is->videoClock;
+    spdlog::info("pts: {0:f}", pts);
+  }
+  /* udpate the video clock */
+  double frameDelay = av_q2d(is->videoSt->codec->time_base);
+  /* if we are repeating a frame, adjust clock accordingly */
+  frameDelay += srcFrame->repeat_pict * (frameDelay / 2);
+
+  if (srcFrame->repeat_pict > 0) {
+    spdlog::info("{0:d}", srcFrame->repeat_pict);
+  }
+  is->videoClock += frameDelay;
+  return pts;
 }
 
 void videoThread(VideoState* is) {
@@ -185,14 +230,22 @@ void videoThread(VideoState* is) {
       // means we quit getting packets
       break;
     }
+    double pts = 0.0F;
     // Decode video frame
     ret = avcodec_send_packet(is->videoCtx, packet);
-    av_packet_unref(packet);
+
     while (avcodec_receive_frame(is->videoCtx, pFrame) == 0) {
-      if (queuePicture(is, pFrame) < 0) {
+      if ((pts = av_frame_get_best_effort_timestamp(pFrame)) == AV_NOPTS_VALUE) {
+        pts = 0.0F;
+      }
+      pts *= av_q2d(is->videoSt->time_base);
+
+      pts = synchronizeVideo(is, pFrame, pts);
+      if (queuePicture(is, pFrame, pts) < 0) {
         break;
       }
     }
+    av_packet_unref(packet);
   }
   av_frame_free(&pFrame);
   spdlog::info("decoding ends");
@@ -262,6 +315,9 @@ int streamComponentOpen(VideoState* is, int streamIndex) {
       // initialize SWS context for software scaling
       is->swsCtx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt, pCodecCtx->width,
                                   pCodecCtx->height, AV_PIX_FMT_YUV420P, SWS_BILINEAR, nullptr, nullptr, nullptr);
+
+      is->frameTimer = av_gettime() / 1000000.0;
+      is->frameLastDelay = 40e-3;
       break;
     defult:
       return -1;
@@ -400,32 +456,77 @@ void videoDisplay(VideoState* is) {
   SDL_RenderPresent(is->sdlRen);
 }
 
+/* Still not accurate */
+double getAudioClock(VideoState* is) {
+  double pts = is->audioClock;  // maintained in the audio thread
+  int hwBufSize = is->audioBufSize - is->audioBufIndex;
+  int bytesPerSample = is->audioSt->codec->channels * 4;
+  int bytesPerSecond = is->audioSt->codec->sample_rate * bytesPerSample;
+
+  if (bytesPerSecond > 0) {
+    pts -= static_cast<double>(hwBufSize) / bytesPerSecond;
+  }
+
+  return pts;
+}
+
 void videoRefreshTimer(void* userdata) {
   VideoState* is = reinterpret_cast<VideoState*>(userdata);
-  if (is->videoSt != nullptr) {
-    if (is->picQueueSize == 0) {
-      scheduleRefresh(is, 1);
-    } else {
-      // VideoPicture* vp = &is->picQ[is->pqRIndex];
-      // Timing code goes here
-
-      scheduleRefresh(is, 20);
-
-      std::lock_guard<std::mutex> lk(*(is->picQueueMutex));
-
-      // show the picture
-      videoDisplay(is);
-
-      // update queeu for next picture
-      if (++is->pqRIndex == VIDEO_PICTURE_QUEUE_SIZE) {
-        is->pqRIndex = 0;
-      }
-      is->picQueueSize--;
-      is->picQueueCond->notify_all();
-    }
-  } else {
+  if (is->videoSt == nullptr) {
     scheduleRefresh(is, 100);
+    return;
+  } else if (is->picQueueSize == 0) {
+    scheduleRefresh(is, 1);
+    return;
   }
+
+  VideoPicture* vp = &is->picQueue[is->pqRIndex];
+  double delay = vp->pts - is->frameLastPts;  // the pts from last time
+  if (delay <= 0 || delay >= 1.0) {
+    // if incorrect delay, use previous one
+    delay = is->frameLastDelay;
+  }
+  // save for next time
+  is->frameLastDelay = delay;
+  is->frameLastPts = vp->pts;
+
+  // udpate delay to sync to audio
+  double audioClock = getAudioClock(is);
+  double diff = vp->pts - audioClock;
+
+  // skip or repeat the frame. Take delay into account
+  // FFplay still doesn't "know if this is the best guess."
+  double syncThreshold = (delay > AV_SYNC_THRESHOLD) ? delay : AV_SYNC_THRESHOLD;
+  if (std::abs(diff) < AV_NOSYNC_THRESHOLD) {
+    if (diff <= -syncThreshold) {
+      delay = 0;
+    } else if (diff >= syncThreshold) {
+      delay *= 2;
+    }
+  }
+  is->frameTimer += delay;
+
+  // compute the READ delay
+  double actualDelay = is->frameTimer - (av_gettime() / 1000000.0);
+
+  if (actualDelay < 0.010) {
+    // Really it should skip the picture instead
+    actualDelay = 0.010;
+  }
+
+  scheduleRefresh(is, static_cast<int>(actualDelay * 1000 + 0.5));
+
+  std::lock_guard<std::mutex> lk(*(is->picQueueMutex));
+
+  // show the picture
+  videoDisplay(is);
+
+  // update queeu for next picture
+  if (++is->pqRIndex == VIDEO_PICTURE_QUEUE_SIZE) {
+    is->pqRIndex = 0;
+  }
+  is->picQueueSize--;
+  is->picQueueCond->notify_all();
 }
 
 /**
@@ -436,7 +537,7 @@ void videoRefreshTimer(void* userdata) {
  * @return int
  */
 int main(int argc, char const* argv[]) {
-  spdlog::info("Tutorial 04: Spawning Threads");
+  spdlog::info("Tutorial 05: Synching Video");
 
   VideoState* is = reinterpret_cast<VideoState*>(av_mallocz(sizeof(VideoState)));
 
@@ -447,7 +548,7 @@ int main(int argc, char const* argv[]) {
     return 1;
   }
   //  Create SDL window
-  SDL_Window* win = SDL_CreateWindow("Tutorial 04: Spawning Threads", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+  SDL_Window* win = SDL_CreateWindow("Tutorial 05: Synching Video", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                      SCREEN_W, SCREEN_H, SDL_WINDOW_SHOWN);
   if (win == nullptr) {
     spdlog::error("Could not create window - {s}", SDL_GetError());
@@ -511,4 +612,4 @@ int main(int argc, char const* argv[]) {
   return 0;
 }
 
-}  // namespace tutorial04
+}  // namespace tutorial05
