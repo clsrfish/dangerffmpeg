@@ -75,5 +75,9 @@
         "set": "cpp",
         "condition_variable": "cpp",
         "thread": "cpp"
-    }
+    },
+    "C_Cpp.enhancedColorization": "Disabled",
+    "C_Cpp.errorSquiggles": "Disabled",
+    "C_Cpp.formatting": "Disabled",
+    "C_Cpp.intelliSenseEngine": "Disabled"
 }

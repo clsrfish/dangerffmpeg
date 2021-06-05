@@ -1,0 +1,6 @@
+# We'll use defaults from the Google style.
+BasedOnStyle: Google
+Language: Cpp
+AllowShortFunctionsOnASingleLine: false
+AlignEscapedNewlines: Left
+ColumnLimit: 120
