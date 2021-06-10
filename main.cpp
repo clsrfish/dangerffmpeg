@@ -11,11 +11,12 @@
 #include "./src/tutorial04.hpp"
 #include "./src/tutorial05.hpp"
 #include "./src/tutorial06.hpp"
+#include "./src/tutorial07.hpp"
 
 int main(int argc, char const *argv[]) {
   spdlog::set_level(spdlog::level::debug);  // Set global log level to debug
   spdlog::info("Welcome to DangerFFmpefg {}:{}:{}!", PROJECT_VERSION_MAJOR, PROJECT_VERSION_MINOR,
                PROJECT_VERSION_PATCH);
 
-  return tutorial06::main(argc, argv);
+  return tutorial07::main(argc, argv);
 }

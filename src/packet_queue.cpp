@@ -1,15 +1,30 @@
 #include "./packet_queue.hpp"
 
+#include <string>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include <libavcodec/packet.h>
+#include <libavutil/mem.h>
+
+#ifdef __cplusplus
+}
+#endif
+
+#include <mutex>
+
 void packetQueueInit(PacketQueue* queue) {
   memset(queue, 0, sizeof(PacketQueue));
   queue->mtx = new std::mutex;
   queue->cond = new std::condition_variable;
+  queue->flushPkt.data = reinterpret_cast<uint8_t*>(const_cast<char*>("FLUSH"));
 }
 
 int packetQueuePut(PacketQueue* queue, AVPacket* pkt) {
   AVPacketList* pktl;
   AVPacket* dst = av_packet_alloc();
-  if (av_packet_ref(dst, pkt) < 0) {
+  if (pkt != &queue->flushPkt && av_packet_ref(dst, pkt) < 0) {
+    av_packet_free(&dst);
     return -1;
   }
   pktl = reinterpret_cast<AVPacketList*>(av_malloc(sizeof(AVPacketList)));
@@ -66,4 +81,22 @@ int packetQueueGet(PacketQueue* queue, AVPacket* pkt, bool block) {
     }
   }
   return ret;
+}
+
+void packetQueueFlush(PacketQueue* q) {
+  AVPacketList *pkt, *pkt1;
+
+  std::lock_guard<std::mutex>(*(q->mtx));
+  if (q->size == 0) {
+    return;
+  }
+  for (pkt = q->firstPkt; pkt != nullptr; pkt = pkt1) {
+    pkt1 = pkt->next;
+    av_packet_unref(&(pkt->pkt));
+    av_freep(&pkt);
+  }
+  q->lastPkt = nullptr;
+  q->firstPkt = nullptr;
+  q->nbPackets = 0;
+  q->size = 0;
 }

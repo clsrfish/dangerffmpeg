@@ -17,6 +17,7 @@ struct PacketQueue {
   std::mutex* mtx;
   std::condition_variable* cond;
   bool quit;
+  AVPacket flushPkt;
 };
 
 void packetQueueInit(PacketQueue* queue);
@@ -24,5 +25,7 @@ void packetQueueInit(PacketQueue* queue);
 int packetQueueGet(PacketQueue* queue, AVPacket* pkt, bool block);
 
 int packetQueuePut(PacketQueue* queue, AVPacket* pkt);
+
+void packetQueueFlush(PacketQueue* q);
 
 #endif  // PKT_QUEUE_H
